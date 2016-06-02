@@ -3,6 +3,10 @@ var cheerio = require('cheerio');
 var request = require('request');
 var EventEmitter = require('events').EventEmitter;
 var myEvents = new EventEmitter();
+var schedule = require('node-schedule');
+var rule = new schedule.RecurrenceRule();
+var times = [];
+var timeTask = require('../controler/schedule_update');
 var router = express.Router();
 var mysql = require('mysql');
 
@@ -14,20 +18,19 @@ var conn = mysql.createConnection({
     port: 3306
 });
 /* GET home page. */
-router.get('/', function (req, res, next) {
+router.get('/updateTags', function (req, res, next) {
     if (req.query.page == undefined) {
         return res.json({err: "err params"})
     }
     var page = req.query.page;
     res.json({msg: "getit"});
     var limit_range = (page - 1) * 10 + ',' + 20;
-    var userAddSql = 'SELECT * FROM pander limit ' + limit_range + ';';
+    var userAddSql = 'SELECT * FROM panda limit ' + limit_range + ';';
     conn.query(userAddSql, function (err, rows, fields) {
         if (err) throw err;
         for (var i = 0; i < rows.length; i++) {
             myEvents.emit('geted', rows[i].room_id);
         }
-
 
     });
 });
@@ -48,37 +51,30 @@ function doGET(room_id) {
     var optionsfordetail = {
         method: 'GET',
         encoding: null,
-        url: "http://www.douyu.com/" + room_id
+        url: "http://www.panda.tv/api_room?roomid=" + room_id
     };
     request(optionsfordetail, function (error, response, body) {
-        if (!error && response.statusCode == 200) {
-            try {
-                var $ = cheerio.load(body);  //cheerio解析data
-                var tags = '';
-                var roomname = $('head title').toArray();
-                if (roomname["0"].children["0"].data == "提示信息 -斗鱼") {
-                    return;
-                }
-                var zhubotag = $('.live-room .relate-text .r-else-tag dd').toArray();
-                var len = zhubotag.length;
-                for (var i = 0; i < len; i++) {
-                    tags = tags + zhubotag[i].children["1"].attribs.title + ','
-                }
-                //var room = new Room(optionsfordetail.url,zb_name[0].children[0].data,roomname[0].children[0].data,tags);
-
-                myEvents.emit('updateTags', tags, room_id);
-
-
-            } catch (e) {
-                console.log(e)
-            }
-
+        if (error) {
+            return console.log(error);
         }
+        try {
+            var parse = JSON.parse(body);
+            var fans = parse.data.roominfo.fans;
+            var bulletin = parse.data.roominfo.bulletin;
+            var classification = parse.data.roominfo.classification;
+
+            myEvents.emit('updateTags', fans, bulletin, classification, room_id);
+        }catch (e){
+            console.log(e)
+        }
+       
+
+
     });
 }
-myEvents.on('updateTags', function (mTags, room_id) {
-    var updateSql = 'UPDATE panda SET tags = ? WHERE room_id = ?';
-    var updateParams = [mTags, room_id];
+myEvents.on('updateTags', function (fans, mTags, classification, room_id) {
+    var updateSql = 'UPDATE panda SET tags = ?,fans= ?,game_name=? WHERE room_id = ?';
+    var updateParams = [mTags, fans, classification, room_id];
     conn.query(updateSql, updateParams, function (err, result) {
         if (err) {
             return console.log(err);
@@ -87,15 +83,7 @@ myEvents.on('updateTags', function (mTags, room_id) {
     })
 
 });
-// myEvents.on('insert', function (AddParams) {
-//     var AddSql = 'INSERT INTO dy(url,name,roomName,tags) VALUES(?,?,?,?)';
-//     conn.query(AddSql, AddParams, function (err, result) {
-//         if (err) {
-//             console.log(err);
-//             return;
-//         }
-//     });
-// });
+
 myEvents.on('initData', function (pn) {
     var douyuApi = {
         method: 'GET',
@@ -123,15 +111,62 @@ function acquireData(data) {
                 return;
             }
 
-
         });
 
     });
 }
-
-
-router.get('/getip', function (req, res, next) {
-    res.json({msg: '获取中....'})
-
+var isRunning = false;
+router.get('/start', function (req, res, next) {
+    sub();
+    if (isRunning) {
+        return res.json({msg: 'copy that 爬虫还在运行.......'})
+    }
+    myEvents.emit('start');
+    isRunning = true;
+    res.json({msg: 'copy that 爬虫开始.......'})
 });
+
+myEvents.on('start', function () {
+    rule.second = times;
+    for (var i = 0; i < 60; i = i + 5) {
+        times.push(i);
+    }
+    schedule.scheduleJob(rule, function () {
+        var page = timeTask.getMainData();
+        if (page > 113) {
+            this.cancel();
+            myEvents.emit('startupdateTags')
+        }
+        console.log("------------" + new Date())
+    });
+});
+myEvents.on('startupdateTags', function () {
+    rule.second = times;
+    for (var i = 0; i < 60; i = i + 2) {
+        times.push(i);
+    }
+    schedule.scheduleJob(rule, function () {
+        var page = timeTask.updateTag();
+        if (page > 500) {
+            this.cancel();
+            isRunning=false;
+            console.log('-----------------------------------爬虫结束---------------------------------------------')
+        }
+        console.log("------------" + new Date())
+    });
+});
+var mypretime=0;
+function sub(){
+    var Today = new Date();
+    var NowHour = Today.getHours();
+    var NowMinute = Today.getMinutes();
+    var NowSecond = Today.getSeconds();
+    var mysec = (NowHour*3600)+(NowMinute*60)+NowSecond;
+    if((mysec-mypretime)>10){
+//10只是一个时间值，就是10秒内禁止重复提交，值随便设
+        mypretime=mysec;
+    }else{
+        return;
+    }
+}
 module.exports = router;

@@ -9,20 +9,21 @@ var count = 0;
 //var start =18955;
 var start = 1;
 var page = 0;
-exports.timeTask = function () {
+exports.updateTag = function () {
 
     var options1 = {
         method: 'GET',
         encoding: null,
-        url: "http://localhost:3000?page=" + start
+        url: "http://localhost:3000/updateTags?page=" + start
     };
     request(options1, function (error, response, body) {
         console.log(new Date());
         start = start + 1;
     });
+    return start;
 
 };
-exports.timeTask1 = function () {
+exports.getMainData = function () {
 
     var options1 = {
         method: 'GET',
